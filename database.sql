@@ -1,5 +1,5 @@
 -- ============================================
--- Script untuk membuat database dan tabel prodi
+-- Script untuk membuat database dan 3 tabel
 -- Jalankan di phpMyAdmin XAMPP
 -- ============================================
 
@@ -23,12 +23,11 @@ CREATE TABLE IF NOT EXISTS prodi (
 -- Tabel 2: dosen (Dosen)
 -- ============================================
 CREATE TABLE IF NOT EXISTS dosen (
-    nidn VARCHAR(20) NOT NULL PRIMARY KEY,
+    nip VARCHAR(20) NOT NULL PRIMARY KEY,
     nama_dosen VARCHAR(100) NOT NULL,
-    kode_prodi VARCHAR(10) NOT NULL,
-    FOREIGN KEY (kode_prodi) REFERENCES prodi(kode_prodi)
-        ON UPDATE CASCADE
-        ON DELETE RESTRICT
+    angkatan_masuk YEAR NOT NULL,
+    agama ENUM('Islam', 'Kristen', 'Katolik', 'Hindu', 'Buddha', 'Konghucu') NOT NULL,
+    jenis_kelamin ENUM('Laki-laki', 'Perempuan') NOT NULL
 ) ENGINE=InnoDB;
 
 -- ============================================
@@ -37,11 +36,9 @@ CREATE TABLE IF NOT EXISTS dosen (
 CREATE TABLE IF NOT EXISTS mahasiswa (
     nim VARCHAR(20) NOT NULL PRIMARY KEY,
     nama_mahasiswa VARCHAR(100) NOT NULL,
-    kode_prodi VARCHAR(10) NOT NULL,
+    kelas VARCHAR(10) NOT NULL,
     angkatan YEAR NOT NULL,
-    FOREIGN KEY (kode_prodi) REFERENCES prodi(kode_prodi)
-        ON UPDATE CASCADE
-        ON DELETE RESTRICT
+    agama ENUM('Islam', 'Kristen', 'Katolik', 'Hindu', 'Buddha', 'Konghucu') NOT NULL
 ) ENGINE=InnoDB;
 
 -- ============================================
@@ -52,14 +49,18 @@ INSERT INTO prodi (kode_prodi, nama_prodi, akreditasi) VALUES
 ('SI001', 'Sistem Informasi', 'B'),
 ('TK001', 'Teknik Komputer', 'Baik');
 
+-- ============================================
 -- Contoh data untuk tabel dosen
-INSERT INTO dosen (nidn, nama_dosen, kode_prodi) VALUES
-('0001', 'Dr. Budi Santoso', 'TI001'),
-('0002', 'Dr. Siti Rahayu', 'SI001'),
-('0003', 'Dr. Ahmad Fauzi', 'TK001');
+-- ============================================
+INSERT INTO dosen (nip, nama_dosen, angkatan_masuk, agama, jenis_kelamin) VALUES
+('198501012010011001', 'Dr. Budi Santoso', 2010, 'Islam', 'Laki-laki'),
+('198703152012012002', 'Dr. Siti Rahayu', 2012, 'Islam', 'Perempuan'),
+('199001202015011003', 'Dr. Ahmad Fauzi', 2015, 'Kristen', 'Laki-laki');
 
+-- ============================================
 -- Contoh data untuk tabel mahasiswa
-INSERT INTO mahasiswa (nim, nama_mahasiswa, kode_prodi, angkatan) VALUES
-('2024001', 'Andi Pratama', 'TI001', 2024),
-('2024002', 'Rina Wulandari', 'SI001', 2024),
-('2024003', 'Dimas Saputra', 'TK001', 2025);
+-- ============================================
+INSERT INTO mahasiswa (nim, nama_mahasiswa, kelas, angkatan, agama) VALUES
+('2024001', 'Andi Pratama', 'TI-1A', 2024, 'Islam'),
+('2024002', 'Rina Wulandari', 'SI-1B', 2024, 'Kristen'),
+('2024003', 'Dimas Saputra', 'TK-1A', 2025, 'Hindu');
