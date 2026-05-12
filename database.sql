@@ -4,11 +4,11 @@
 -- ============================================
 
 -- Membuat database (jika belum ada)
-CREATE DATABASE IF NOT EXISTS db_kampus
+CREATE DATABASE IF NOT EXISTS FINAL_MuhAqsha
   CHARACTER SET utf8mb4
   COLLATE utf8mb4_general_ci;
 
-USE db_kampus;
+USE FINAL_MuhAqsha;
 
 -- ============================================
 -- Tabel 1: prodi (Program Studi)
