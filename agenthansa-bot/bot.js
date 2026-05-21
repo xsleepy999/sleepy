@@ -156,9 +156,16 @@ function generateCandidates(q) {
 async function attemptRegister(name, desc, statusCallback) {
   const MAX_TRIES = 12;
   let log = [];
+  let waitTime = 3000; // Mulai 3 detik antar request
   
   for (let i = 0; i < MAX_TRIES; i++) {
     log.push(`\n--- Attempt ${i + 1}/${MAX_TRIES} ---`);
+    
+    // Wait sebelum request (kecuali pertama)
+    if (i > 0) {
+      log.push(`Wait ${waitTime}ms...`);
+      await new Promise(r => setTimeout(r, waitTime));
+    }
     
     // Get challenge
     let r1;
@@ -167,6 +174,14 @@ async function attemptRegister(name, desc, statusCallback) {
     } catch (err) {
       const errData = err.response ? JSON.stringify(err.response.data) : err.message;
       log.push(`Register error: ${errData}`);
+      
+      // Rate limit - tunggu lebih lama
+      if (errData.includes('Too many requests') || errData.includes('Slow down') || (err.response && err.response.status === 429)) {
+        waitTime = Math.min(waitTime * 2, 30000); // Exponential backoff, max 30s
+        log.push(`Rate limited, naik wait ke ${waitTime}ms`);
+        if (statusCallback) await statusCallback(`Rate limited, tunggu ${waitTime/1000}s...`);
+        continue;
+      }
       
       if (errData.includes('exists') || errData.includes('taken') || errData.includes('already')) {
         return { success: false, error: 'Nama sudah dipakai', log };
@@ -198,6 +213,9 @@ async function attemptRegister(name, desc, statusCallback) {
     const tryAns = candidates[0];
     log.push(`Try: ${tryAns.op}=${tryAns.val}`);
     
+    // Wait sebelum verify (avoid rate limit)
+    await new Promise(r => setTimeout(r, 1500));
+    
     try {
       const r2 = await axios.post(VERIFY, {
         challenge_id: cid,
@@ -217,7 +235,12 @@ async function attemptRegister(name, desc, statusCallback) {
     } catch (err) {
       const errData = err.response ? JSON.stringify(err.response.data) : err.message;
       log.push(`Wrong: ${errData.substring(0, 80)}`);
-      // Lanjut ke iterasi berikut, akan dapat challenge baru
+      
+      // Rate limit pada verify - tunggu lebih lama
+      if (errData.includes('Too many') || (err.response && err.response.status === 429)) {
+        waitTime = Math.min(waitTime * 2, 30000);
+        log.push(`Rate limited, naik wait ke ${waitTime}ms`);
+      }
       continue;
     }
   }
