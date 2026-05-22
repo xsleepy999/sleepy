@@ -1,12 +1,39 @@
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
+const fs = require('fs');
 
 const TOKEN = process.env.TELEGRAM_TOKEN;
-const API = 'https://www.agenthansa.com/api/agents/register';
-const VERIFY = API + '/verify';
+const BASE = 'https://www.agenthansa.com/api';
 
-// Bot dengan polling timeout lebih besar untuk fix EFATAL di Termux
+// File untuk simpan data agent (api_key, dll) per user
+const DATA_FILE = './agents-data.json';
+
+// Load data tersimpan
+let userData = {};
+try {
+  if (fs.existsSync(DATA_FILE)) {
+    userData = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+  }
+} catch (e) {
+  console.log('No existing data file');
+}
+
+function saveData() {
+  fs.writeFileSync(DATA_FILE, JSON.stringify(userData, null, 2));
+}
+
+function getUser(chatId) {
+  if (!userData[chatId]) {
+    userData[chatId] = { agents: {} };
+  }
+  return userData[chatId];
+}
+
+// ============================================
+// BOT SETUP
+// ============================================
+
 const bot = new TelegramBot(TOKEN, {
   polling: {
     interval: 2000,
@@ -21,6 +48,9 @@ const bot = new TelegramBot(TOKEN, {
 bot.on('polling_error', (err) => {
   console.log('[Polling]', err.code || err.message);
 });
+
+// Helper: sleep
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 // ============================================
 // MATH SOLVER
@@ -41,11 +71,9 @@ const MULT_WORDS = {
   'quadruple': 4, 'quintuple': 5
 };
 
-// Extract semua angka (digit + word) dengan urutan
 function extractAllNumbers(text) {
   const nums = [];
-  const lower = text.toLowerCase();
-  const tokens = lower.split(/\s+/);
+  const tokens = text.toLowerCase().split(/\s+/);
   for (const token of tokens) {
     const cleaned = token.replace(/[^\w]/g, '');
     if (/^\d+$/.test(cleaned)) {
@@ -57,27 +85,21 @@ function extractAllNumbers(text) {
   return nums;
 }
 
-// Generate semua kemungkinan jawaban (urut prioritas)
 function generateCandidates(q) {
   const lower = q.toLowerCase();
   const nums = extractAllNumbers(q);
-  console.log(`[SOLVE] Q: "${q}"`);
-  console.log(`[SOLVE] Numbers: [${nums.join(', ')}]`);
-  
   if (nums.length === 0) return [];
   
   const cand = [];
   const n1 = nums[0];
   const n2 = nums[1] || 0;
   
-  // === MULTIPLY ===
   for (const w in MULT_WORDS) {
     if (new RegExp('\\b' + w + '\\b').test(lower)) {
       cand.push({ op: w, val: n1 * MULT_WORDS[w] });
     }
   }
   
-  // "X times as many" / "X times more"
   const timesPatterns = [
     /(\w+)\s+times\s+as\s+many/,
     /(\w+)\s+times\s+more/,
@@ -94,41 +116,23 @@ function generateCandidates(q) {
     }
   }
   
-  // === DIVIDE ===
   if (/\bhalf\b/i.test(lower)) {
     cand.push({ op: 'half', val: Math.floor(n1 / 2) });
     if (n1 % 2 === 1) cand.push({ op: 'half_round', val: Math.round(n1 / 2) });
   }
-  if (/\bquarter\b|\bfourth\b/i.test(lower)) {
-    cand.push({ op: 'quarter', val: Math.floor(n1 / 4) });
-  }
-  if (/\bthird\b/i.test(lower)) {
-    cand.push({ op: 'third', val: Math.floor(n1 / 3) });
-  }
-  if (/divided\s+by/i.test(lower) && nums.length >= 2) {
-    cand.push({ op: 'div', val: Math.floor(n1 / n2) });
-  }
+  if (/\bquarter\b|\bfourth\b/i.test(lower)) cand.push({ op: 'quarter', val: Math.floor(n1 / 4) });
+  if (/\bthird\b/i.test(lower)) cand.push({ op: 'third', val: Math.floor(n1 / 3) });
+  if (/divided\s+by/i.test(lower) && nums.length >= 2) cand.push({ op: 'div', val: Math.floor(n1 / n2) });
   
-  // === ADD ===
-  if (/\bmore\b/i.test(lower) && nums.length >= 2) {
-    cand.push({ op: 'add', val: n1 + n2 });
-  }
+  if (/\bmore\b/i.test(lower) && nums.length >= 2) cand.push({ op: 'add', val: n1 + n2 });
   if (/\bplus\b|combined|altogether|\btotal\b|together/i.test(lower)) {
-    const sum = nums.reduce((a, b) => a + b, 0);
-    cand.push({ op: 'sum', val: sum });
+    cand.push({ op: 'sum', val: nums.reduce((a, b) => a + b, 0) });
   }
-  
-  // === SUBTRACT ===
   if (/\bless\b|\bfewer\b|\bminus\b/i.test(lower) && nums.length >= 2) {
     cand.push({ op: 'subtract', val: n1 - n2 });
   }
+  if (/same\s+(?:number|amount|as)/i.test(lower)) cand.push({ op: 'same', val: n1 });
   
-  // === SAME ===
-  if (/same\s+(?:number|amount|as)/i.test(lower)) {
-    cand.push({ op: 'same', val: n1 });
-  }
-  
-  // === FALLBACKS ===
   cand.push({ op: 'first', val: n1 });
   if (nums.length >= 2) {
     cand.push({ op: 'second', val: n2 });
@@ -137,116 +141,93 @@ function generateCandidates(q) {
     cand.push({ op: 'sub_fb', val: Math.abs(n1 - n2) });
   }
   
-  // Dedup berdasarkan value
   const seen = new Set();
-  const unique = cand.filter(c => {
+  return cand.filter(c => {
     if (seen.has(c.val) || c.val < 0) return false;
     seen.add(c.val);
     return true;
   });
-  
-  console.log(`[SOLVE] Candidates: ${JSON.stringify(unique)}`);
-  return unique;
 }
 
 // ============================================
-// REGISTER DENGAN SMART RETRY
+// API CALLS
 // ============================================
 
-async function attemptRegister(name, desc, statusCallback) {
+async function apiCall(method, path, data, apiKey) {
+  const config = {
+    method,
+    url: BASE + path,
+    timeout: 30000,
+    headers: { 'Content-Type': 'application/json' }
+  };
+  if (apiKey) config.headers['Authorization'] = `Bearer ${apiKey}`;
+  if (data) config.data = data;
+  
+  const res = await axios(config);
+  return res.data;
+}
+
+async function registerAgent(name, desc, statusCb) {
   const MAX_TRIES = 5;
   let log = [];
-  let waitTime = 10000; // Mulai 10 detik antar request
+  let waitTime = 8000;
   
   for (let i = 0; i < MAX_TRIES; i++) {
-    log.push(`\n--- Attempt ${i + 1}/${MAX_TRIES} ---`);
-    
-    // Wait sebelum request (kecuali pertama)
     if (i > 0) {
       log.push(`Wait ${waitTime/1000}s...`);
-      if (statusCallback) await statusCallback(`Tunggu ${waitTime/1000}s sebelum retry...`);
-      await new Promise(r => setTimeout(r, waitTime));
+      if (statusCb) await statusCb(`Tunggu ${waitTime/1000}s...`);
+      await sleep(waitTime);
     }
     
-    // Get challenge
     let r1;
     try {
-      r1 = await axios.post(API, { name, description: desc }, { timeout: 30000 });
+      r1 = await apiCall('POST', '/agents/register', { name, description: desc });
     } catch (err) {
       const errData = err.response ? JSON.stringify(err.response.data) : err.message;
       log.push(`Register error: ${errData}`);
-      
-      // Rate limit - tunggu lebih lama
-      if (errData.includes('Too many requests') || errData.includes('Slow down') || (err.response && err.response.status === 429)) {
-        waitTime = Math.min(waitTime * 2, 60000); // Exponential backoff, max 60s
-        log.push(`Rate limited, tunggu ${waitTime/1000}s`);
-        if (statusCallback) await statusCallback(`Rate limited, tunggu ${waitTime/1000}s...`);
+      if (errData.includes('Too many') || errData.includes('Slow')) {
+        waitTime = Math.min(waitTime * 2, 60000);
         continue;
       }
-      
-      if (errData.includes('exists') || errData.includes('taken') || errData.includes('already')) {
+      if (errData.includes('exists') || errData.includes('taken')) {
         return { success: false, error: 'Nama sudah dipakai', log };
       }
       throw err;
     }
     
-    if (r1.data.status !== 'challenge_required') {
-      log.push(`Direct success: ${JSON.stringify(r1.data)}`);
-      return { success: true, data: r1.data, log };
+    if (r1.status !== 'challenge_required') {
+      return { success: true, data: r1, log };
     }
     
-    const cid = r1.data.challenge_id;
-    const q = r1.data.question;
+    const cid = r1.challenge_id;
+    const q = r1.question;
     log.push(`Q: ${q}`);
-    
-    if (statusCallback) {
-      await statusCallback(`Attempt ${i+1}: ${q.substring(0, 100)}`);
-    }
+    if (statusCb) await statusCb(`Q: ${q.substring(0, 80)}`);
     
     const candidates = generateCandidates(q);
+    if (candidates.length === 0) continue;
     
-    if (candidates.length === 0) {
-      log.push('No candidates');
-      continue;
-    }
-    
-    // Coba kandidat pertama (best guess)
     const tryAns = candidates[0];
     log.push(`Try: ${tryAns.op}=${tryAns.val}`);
     
-    // Wait sebelum verify (avoid rate limit)
-    await new Promise(r => setTimeout(r, 3000));
+    await sleep(2500);
     
     try {
-      const r2 = await axios.post(VERIFY, {
+      const r2 = await apiCall('POST', '/agents/register/verify', {
         challenge_id: cid,
         challenge_answer: tryAns.val
-      }, { timeout: 30000 });
-      
-      log.push(`SUCCESS! ${JSON.stringify(r2.data)}`);
-      return { 
-        success: true, 
-        data: r2.data, 
-        question: q, 
-        answer: tryAns.val, 
-        op: tryAns.op,
-        log,
-        attempts: i + 1
-      };
+      });
+      log.push(`SUCCESS!`);
+      return { success: true, data: r2, question: q, answer: tryAns.val, op: tryAns.op, log, attempts: i + 1 };
     } catch (err) {
       const errData = err.response ? JSON.stringify(err.response.data) : err.message;
       log.push(`Wrong: ${errData.substring(0, 80)}`);
-      
-      // Rate limit pada verify - tunggu lebih lama
-      if (errData.includes('Too many') || errData.includes('Slow down') || (err.response && err.response.status === 429)) {
-        waitTime = Math.min(waitTime * 2, 60000);
-        log.push(`Rate limited, tunggu ${waitTime/1000}s`);
-      }
+      if (errData.includes('Too many')) waitTime = Math.min(waitTime * 2, 60000);
       continue;
     }
   }
   
-  return { success: false, error: `Gagal setelah ${MAX_TRIES} percobaan`, log };
+  return { success: false, error: 'Max tries reached', log };
 }
 
 // ============================================
@@ -255,112 +236,376 @@ async function attemptRegister(name, desc, statusCallback) {
 
 bot.onText(/\/start/, (msg) => {
   bot.sendMessage(msg.chat.id, 
-    '🤖 AgentHansa Auto-Register Bot\n\n' +
-    '📝 Commands:\n' +
-    '/register <nama> <deskripsi>\n' +
-    '/test - Test math solver\n' +
-    '/help - Bantuan'
+    '🤖 *AgentHansa Bot - Full Onboarding*\n\n' +
+    '📝 *Commands:*\n\n' +
+    '*Register & Auth:*\n' +
+    '/register `<nama>` `<deskripsi>` - Daftar agent\n' +
+    '/setkey `<nama>` `<api_key>` - Set API key manual\n' +
+    '/agents - Lihat agent tersimpan\n\n' +
+    '*Onboarding:*\n' +
+    '/wallet `<nama>` `<fluxa_agent_id>` - Set Fluxa wallet\n' +
+    '/alliance `<nama>` `<red|blue>` - Pilih alliance\n' +
+    '/offer `<nama>` `<offer_id>` - Claim offer\n' +
+    '/forum `<nama>` `<title>` | `<body>` - Post forum\n' +
+    '/onboard_status `<nama>` - Cek status\n\n' +
+    '*Auto:*\n' +
+    '/autoonboard `<nama>` `<fluxa_id>` `<alliance>` - Lakukan semua step\n\n' +
+    '/help - Detail',
+    { parse_mode: 'Markdown' }
   );
 });
 
 bot.onText(/\/help/, (msg) => {
   bot.sendMessage(msg.chat.id,
-    '📖 Cara Pakai:\n\n' +
-    '/register puy AI assistant untuk coding\n\n' +
-    'Bot otomatis:\n' +
-    '✓ Daftar ke AgentHansa\n' +
-    '✓ Selesaikan math challenge\n' +
-    '✓ Retry kalau salah (max 12x)\n' +
-    '✓ Tampilkan semua proses'
+    '📖 *Panduan Lengkap*\n\n' +
+    '*1. Daftar agent dulu:*\n' +
+    '`/register puy AI assistant`\n\n' +
+    '*2. Lakukan onboarding:*\n' +
+    '`/wallet puy <fluxa_agent_id>`\n' +
+    '`/alliance puy red`\n' +
+    '`/forum puy Review | Bot ini bagus`\n\n' +
+    '*3. Atau sekaligus:*\n' +
+    '`/autoonboard puy <fluxa_id> red`\n\n' +
+    '*Lihat status:*\n' +
+    '`/onboard_status puy`',
+    { parse_mode: 'Markdown' }
   );
 });
 
+// ===== REGISTER =====
 bot.onText(/\/register (.+)/, async (msg, match) => {
   const args = match[1].trim();
   const parts = args.split(/\s+(.+)/);
   const name = parts[0];
   const desc = parts[1] || 'AI Agent';
   
-  if (!name) {
-    return bot.sendMessage(msg.chat.id, 'Format: /register <nama> <deskripsi>');
-  }
+  if (!name) return bot.sendMessage(msg.chat.id, 'Format: /register <nama> <deskripsi>');
   
-  const loading = await bot.sendMessage(msg.chat.id, 
-    `🔄 Mendaftarkan: ${name}\n⏳ Menyelesaikan challenge...`
-  );
+  const loading = await bot.sendMessage(msg.chat.id, `🔄 Mendaftarkan: ${name}...`);
   
   let lastUpdate = Date.now();
-  const statusCallback = async (text) => {
+  const statusCb = async (text) => {
     if (Date.now() - lastUpdate < 1500) return;
     lastUpdate = Date.now();
     try {
       await bot.editMessageText(`🔄 ${name}\n${text}`, {
-        chat_id: msg.chat.id,
-        message_id: loading.message_id
+        chat_id: msg.chat.id, message_id: loading.message_id
       });
     } catch (e) {}
   };
   
   try {
-    const result = await attemptRegister(name, desc, statusCallback);
+    const result = await registerAgent(name, desc, statusCb);
     
-    let text;
     if (result.success) {
-      text = `✅ BERHASIL!\n\n`;
-      text += `📛 Nama: ${name}\n`;
+      const apiKey = result.data.api_key || result.data.apiKey || result.data.token;
+      const user = getUser(msg.chat.id);
+      user.agents[name] = {
+        api_key: apiKey,
+        description: desc,
+        registered_at: new Date().toISOString(),
+        full_data: result.data
+      };
+      saveData();
+      
+      let text = `✅ *BERHASIL!*\n\n`;
+      text += `📛 Nama: \`${name}\`\n`;
       text += `📝 Deskripsi: ${desc}\n`;
-      text += `🔢 Attempts: ${result.attempts}\n\n`;
       if (result.question) {
-        text += `❓ Challenge:\n${result.question}\n\n`;
-        text += `✓ Jawaban: ${result.answer} (${result.op})\n\n`;
+        text += `❓ Q: ${result.question}\n✓ A: ${result.answer}\n\n`;
       }
-      text += `📦 Response:\n${JSON.stringify(result.data, null, 2)}\n\n`;
-      text += `📋 Log:${result.log.join('\n')}`;
+      if (apiKey) {
+        text += `🔑 API Key: \`${apiKey}\`\n\n`;
+      }
+      text += `📦 Data:\n\`\`\`\n${JSON.stringify(result.data, null, 2)}\n\`\`\``;
+      
+      await bot.editMessageText(text.substring(0, 4000), {
+        chat_id: msg.chat.id, message_id: loading.message_id, parse_mode: 'Markdown'
+      });
     } else {
-      text = `❌ GAGAL\n\n`;
-      text += `Error: ${result.error}\n\n`;
-      text += `📋 Log:${result.log.join('\n')}`;
+      await bot.editMessageText(`❌ Gagal: ${result.error}\n\nLog:\n${result.log.join('\n').substring(0, 3500)}`, {
+        chat_id: msg.chat.id, message_id: loading.message_id
+      });
     }
-    
-    text = text.substring(0, 4000);
-    
-    await bot.editMessageText(text, {
-      chat_id: msg.chat.id,
-      message_id: loading.message_id
-    });
   } catch (e) {
-    let errMsg = e.message;
-    if (e.response && e.response.data) {
-      errMsg = JSON.stringify(e.response.data);
-    }
-    await bot.editMessageText('❌ Error: ' + errMsg.substring(0, 1000), {
-      chat_id: msg.chat.id,
-      message_id: loading.message_id
+    const err = e.response ? JSON.stringify(e.response.data) : e.message;
+    await bot.editMessageText('❌ Error: ' + err.substring(0, 1000), {
+      chat_id: msg.chat.id, message_id: loading.message_id
     });
   }
 });
 
-bot.onText(/\/test/, (msg) => {
-  const tests = [
-    'A parrot has 3 keys. A raccoon has twice as many. How many keys does the raccoon have?',
-    'A cat has 5 fish. A dog has half as many. How many fish does the dog have?',
-    'A bear has 4 apples. A wolf has 3 more. How many apples does the wolf have?',
-    'A bird has 10 worms. A snake has 4 less. How many worms does the snake have?',
-    'A fox has 2 berries. A rabbit has thrice as many. How many berries does the rabbit have?',
-    'If Tom has 5 marbles and Jerry has 7 marbles, how many marbles do they have altogether?',
-    'A duck has 4 eggs. A goose has the same number. How many eggs does the goose have?',
-    'A cow has 8 cows. A horse has a third as many. How many horses are there?'
-  ];
+// ===== SET API KEY MANUAL =====
+bot.onText(/\/setkey (\S+)\s+(.+)/, (msg, match) => {
+  const name = match[1];
+  const apiKey = match[2].trim();
+  const user = getUser(msg.chat.id);
   
-  let result = '🧪 TEST SOLVER:\n\n';
-  for (const t of tests) {
-    const cands = generateCandidates(t);
-    const top3 = cands.slice(0, 3).map(c => `${c.op}=${c.val}`).join(', ');
-    result += `Q: ${t}\n→ Pick: ${cands[0] ? cands[0].op + '=' + cands[0].val : 'none'}\n  Alts: ${top3}\n\n`;
-  }
+  if (!user.agents[name]) user.agents[name] = {};
+  user.agents[name].api_key = apiKey;
+  saveData();
   
-  bot.sendMessage(msg.chat.id, result.substring(0, 4000));
+  bot.sendMessage(msg.chat.id, `✅ API Key untuk \`${name}\` tersimpan!`, { parse_mode: 'Markdown' });
 });
 
-console.log('🤖 AgentHansa Bot started!');
-console.log('📡 API:', API);
+// ===== LIST AGENTS =====
+bot.onText(/\/agents/, (msg) => {
+  const user = getUser(msg.chat.id);
+  const agents = Object.keys(user.agents);
+  
+  if (agents.length === 0) {
+    return bot.sendMessage(msg.chat.id, 'Belum ada agent terdaftar. Pakai /register dulu.');
+  }
+  
+  let text = '📋 *Agent Tersimpan:*\n\n';
+  for (const name of agents) {
+    const a = user.agents[name];
+    text += `📛 \`${name}\`\n`;
+    text += `🔑 ${a.api_key ? a.api_key.substring(0, 20) + '...' : 'No key'}\n\n`;
+  }
+  bot.sendMessage(msg.chat.id, text, { parse_mode: 'Markdown' });
+});
+
+// ===== WALLET (Fluxa) =====
+bot.onText(/\/wallet (\S+)\s+(.+)/, async (msg, match) => {
+  const name = match[1];
+  const fluxaId = match[2].trim();
+  const user = getUser(msg.chat.id);
+  
+  if (!user.agents[name] || !user.agents[name].api_key) {
+    return bot.sendMessage(msg.chat.id, `❌ Agent ${name} belum terdaftar atau tidak ada API key. Pakai /setkey dulu.`);
+  }
+  
+  const loading = await bot.sendMessage(msg.chat.id, `🔄 Setting Fluxa wallet untuk ${name}...`);
+  
+  try {
+    const result = await apiCall('PUT', '/agents/fluxa-wallet', 
+      { fluxa_agent_id: fluxaId },
+      user.agents[name].api_key
+    );
+    
+    user.agents[name].fluxa_agent_id = fluxaId;
+    saveData();
+    
+    await bot.editMessageText(
+      `✅ *Wallet Set!*\n\n📛 ${name}\n🔗 Fluxa ID: \`${fluxaId}\`\n\n📦 Response:\n\`\`\`\n${JSON.stringify(result, null, 2)}\n\`\`\``,
+      { chat_id: msg.chat.id, message_id: loading.message_id, parse_mode: 'Markdown' }
+    );
+  } catch (e) {
+    const err = e.response ? JSON.stringify(e.response.data) : e.message;
+    await bot.editMessageText('❌ Error: ' + err.substring(0, 1000), {
+      chat_id: msg.chat.id, message_id: loading.message_id
+    });
+  }
+});
+
+// ===== ALLIANCE =====
+bot.onText(/\/alliance (\S+)\s+(\S+)/, async (msg, match) => {
+  const name = match[1];
+  const alliance = match[2].trim().toLowerCase();
+  const user = getUser(msg.chat.id);
+  
+  if (!user.agents[name] || !user.agents[name].api_key) {
+    return bot.sendMessage(msg.chat.id, `❌ Agent ${name} belum punya API key.`);
+  }
+  
+  const loading = await bot.sendMessage(msg.chat.id, `🔄 Setting alliance ${alliance}...`);
+  
+  try {
+    const result = await apiCall('PATCH', '/agents/alliance',
+      { alliance },
+      user.agents[name].api_key
+    );
+    
+    user.agents[name].alliance = alliance;
+    saveData();
+    
+    await bot.editMessageText(
+      `✅ *Alliance Set!*\n\n📛 ${name}\n⚔️ Alliance: \`${alliance}\`\n\n📦 Response:\n\`\`\`\n${JSON.stringify(result, null, 2)}\n\`\`\``,
+      { chat_id: msg.chat.id, message_id: loading.message_id, parse_mode: 'Markdown' }
+    );
+  } catch (e) {
+    const err = e.response ? JSON.stringify(e.response.data) : e.message;
+    await bot.editMessageText('❌ Error: ' + err.substring(0, 1000), {
+      chat_id: msg.chat.id, message_id: loading.message_id
+    });
+  }
+});
+
+// ===== CLAIM OFFER =====
+bot.onText(/\/offer (\S+)\s+(.+)/, async (msg, match) => {
+  const name = match[1];
+  const offerId = match[2].trim();
+  const user = getUser(msg.chat.id);
+  
+  if (!user.agents[name] || !user.agents[name].api_key) {
+    return bot.sendMessage(msg.chat.id, `❌ Agent ${name} belum punya API key.`);
+  }
+  
+  const loading = await bot.sendMessage(msg.chat.id, `🔄 Claiming offer ${offerId}...`);
+  
+  try {
+    const result = await apiCall('POST', `/offers/${offerId}/ref`, null, user.agents[name].api_key);
+    
+    await bot.editMessageText(
+      `✅ *Offer Claimed!*\n\n📛 ${name}\n🎁 Offer: \`${offerId}\`\n\n📦 Response:\n\`\`\`\n${JSON.stringify(result, null, 2)}\n\`\`\``,
+      { chat_id: msg.chat.id, message_id: loading.message_id, parse_mode: 'Markdown' }
+    );
+  } catch (e) {
+    const err = e.response ? JSON.stringify(e.response.data) : e.message;
+    await bot.editMessageText('❌ Error: ' + err.substring(0, 1000), {
+      chat_id: msg.chat.id, message_id: loading.message_id
+    });
+  }
+});
+
+// ===== FORUM POST =====
+bot.onText(/\/forum (\S+)\s+(.+)/, async (msg, match) => {
+  const name = match[1];
+  const rest = match[2].trim();
+  const user = getUser(msg.chat.id);
+  
+  if (!user.agents[name] || !user.agents[name].api_key) {
+    return bot.sendMessage(msg.chat.id, `❌ Agent ${name} belum punya API key.`);
+  }
+  
+  // Format: title | body
+  const sep = rest.indexOf('|');
+  let title, body;
+  if (sep > 0) {
+    title = rest.substring(0, sep).trim();
+    body = rest.substring(sep + 1).trim();
+  } else {
+    title = rest;
+    body = `Post by ${name} agent.`;
+  }
+  
+  const loading = await bot.sendMessage(msg.chat.id, `🔄 Posting forum...`);
+  
+  try {
+    const result = await apiCall('POST', '/forum',
+      { title, body, category: 'review' },
+      user.agents[name].api_key
+    );
+    
+    await bot.editMessageText(
+      `✅ *Forum Posted!*\n\n📛 ${name}\n📰 Title: ${title}\n\n📦 Response:\n\`\`\`\n${JSON.stringify(result, null, 2)}\n\`\`\``,
+      { chat_id: msg.chat.id, message_id: loading.message_id, parse_mode: 'Markdown' }
+    );
+  } catch (e) {
+    const err = e.response ? JSON.stringify(e.response.data) : e.message;
+    await bot.editMessageText('❌ Error: ' + err.substring(0, 1000), {
+      chat_id: msg.chat.id, message_id: loading.message_id
+    });
+  }
+});
+
+// ===== ONBOARDING STATUS =====
+bot.onText(/\/onboard_status (\S+)/, async (msg, match) => {
+  const name = match[1];
+  const user = getUser(msg.chat.id);
+  
+  if (!user.agents[name] || !user.agents[name].api_key) {
+    return bot.sendMessage(msg.chat.id, `❌ Agent ${name} belum punya API key.`);
+  }
+  
+  const loading = await bot.sendMessage(msg.chat.id, `🔄 Checking status...`);
+  
+  try {
+    const result = await apiCall('GET', '/agents/onboarding-status', null, user.agents[name].api_key);
+    
+    await bot.editMessageText(
+      `📊 *Onboarding Status: ${name}*\n\n\`\`\`\n${JSON.stringify(result, null, 2)}\n\`\`\``,
+      { chat_id: msg.chat.id, message_id: loading.message_id, parse_mode: 'Markdown' }
+    );
+  } catch (e) {
+    const err = e.response ? JSON.stringify(e.response.data) : e.message;
+    await bot.editMessageText('❌ Error: ' + err.substring(0, 1000), {
+      chat_id: msg.chat.id, message_id: loading.message_id
+    });
+  }
+});
+
+// ===== AUTO ONBOARD (Semua step) =====
+bot.onText(/\/autoonboard (\S+)\s+(\S+)\s+(\S+)/, async (msg, match) => {
+  const name = match[1];
+  const fluxaId = match[2].trim();
+  const alliance = match[3].trim().toLowerCase();
+  const user = getUser(msg.chat.id);
+  
+  if (!user.agents[name] || !user.agents[name].api_key) {
+    return bot.sendMessage(msg.chat.id, `❌ Agent ${name} belum punya API key. /register dulu.`);
+  }
+  
+  const apiKey = user.agents[name].api_key;
+  const loading = await bot.sendMessage(msg.chat.id, `🚀 Auto Onboarding: ${name}...`);
+  let log = [];
+  
+  const updateMsg = async (text) => {
+    try {
+      await bot.editMessageText(text.substring(0, 4000), {
+        chat_id: msg.chat.id, message_id: loading.message_id, parse_mode: 'Markdown'
+      });
+    } catch (e) {}
+  };
+  
+  try {
+    // Step 1: Wallet
+    log.push('1️⃣ Setting Fluxa wallet...');
+    await updateMsg(`🚀 ${name}\n${log.join('\n')}`);
+    try {
+      await apiCall('PUT', '/agents/fluxa-wallet', { fluxa_agent_id: fluxaId }, apiKey);
+      log.push('   ✅ Wallet OK');
+    } catch (e) {
+      log.push(`   ❌ ${(e.response ? JSON.stringify(e.response.data) : e.message).substring(0, 100)}`);
+    }
+    await sleep(3000);
+    
+    // Step 2: Alliance
+    log.push('\n2️⃣ Setting alliance...');
+    await updateMsg(`🚀 ${name}\n${log.join('\n')}`);
+    try {
+      await apiCall('PATCH', '/agents/alliance', { alliance }, apiKey);
+      log.push(`   ✅ Alliance: ${alliance}`);
+    } catch (e) {
+      log.push(`   ❌ ${(e.response ? JSON.stringify(e.response.data) : e.message).substring(0, 100)}`);
+    }
+    await sleep(3000);
+    
+    // Step 3: Forum
+    log.push('\n3️⃣ Posting forum...');
+    await updateMsg(`🚀 ${name}\n${log.join('\n')}`);
+    try {
+      await apiCall('POST', '/forum', {
+        title: `${name} introduction`,
+        body: `Hello! I am ${name}, ready to serve.`,
+        category: 'review'
+      }, apiKey);
+      log.push('   ✅ Forum posted');
+    } catch (e) {
+      log.push(`   ❌ ${(e.response ? JSON.stringify(e.response.data) : e.message).substring(0, 100)}`);
+    }
+    await sleep(3000);
+    
+    // Step 4: Status
+    log.push('\n4️⃣ Checking status...');
+    await updateMsg(`🚀 ${name}\n${log.join('\n')}`);
+    try {
+      const status = await apiCall('GET', '/agents/onboarding-status', null, apiKey);
+      log.push(`   📊 Status:\n\`\`\`\n${JSON.stringify(status, null, 2)}\n\`\`\``);
+    } catch (e) {
+      log.push(`   ❌ ${(e.response ? JSON.stringify(e.response.data) : e.message).substring(0, 100)}`);
+    }
+    
+    log.push('\n✅ Auto Onboarding Selesai!');
+    await updateMsg(`🚀 ${name}\n${log.join('\n')}`);
+    
+  } catch (e) {
+    log.push(`\n❌ Fatal: ${e.message}`);
+    await updateMsg(`🚀 ${name}\n${log.join('\n')}`);
+  }
+});
+
+console.log('🤖 AgentHansa Bot started! (Full Onboarding)');
+console.log('📡 API:', BASE);
+console.log('📁 Data:', DATA_FILE);
