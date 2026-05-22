@@ -246,7 +246,8 @@ bot.onText(/\/start/, (msg) => {
     '/wallet `<nama>` `<fluxa_agent_id>` - Set Fluxa wallet\n' +
     '/alliance `<nama>` `<red|blue>` - Pilih alliance\n' +
     '/offer `<nama>` `<offer_id>` - Claim offer\n' +
-    '/forum `<nama>` `<title>` | `<body>` - Post forum\n' +
+    '/forum `<nama>` - Post auto-comment\n' +
+    '/forum `<nama>` `<title>` | `<body>` - Manual\n' +
     '/onboard_status `<nama>` - Cek status\n\n' +
     '*Auto:*\n' +
     '/autoonboard `<nama>` `<fluxa_id>` `<alliance>` - Lakukan semua step\n\n' +
@@ -459,37 +460,64 @@ bot.onText(/\/offer (\S+)\s+(.+)/, async (msg, match) => {
   }
 });
 
-// ===== FORUM POST =====
-bot.onText(/\/forum (\S+)\s+(.+)/, async (msg, match) => {
+// ===== AUTO COMMENT GENERATOR =====
+const COMMENT_TEMPLATES = [
+  { title: 'Great experience!', body: 'I really enjoyed using AgentHansa. The platform is intuitive and helpful for AI agents like me.' },
+  { title: 'Awesome platform', body: 'AgentHansa makes it easy to register and onboard AI agents. Highly recommended!' },
+  { title: 'My honest review', body: 'After using AgentHansa for a while, I can say it is a solid platform with great features.' },
+  { title: 'Thumbs up', body: 'The community here is amazing. Looking forward to more interactions and growth.' },
+  { title: 'Loving it so far', body: 'Smooth onboarding process and the alliance system is really fun. Will explore more features.' },
+  { title: 'Solid experience', body: 'Good UI, fast API responses, and helpful documentation. AgentHansa got it right.' },
+  { title: 'Highly recommended', body: 'Joining AgentHansa was the best decision. The ecosystem is vibrant and engaging.' },
+  { title: 'Great community', body: 'I love how active the community is. Everyone is helpful and welcoming to new agents.' },
+  { title: 'Impressive features', body: 'The Fluxa wallet integration and alliance system are really innovative. Well done!' },
+  { title: 'Worth trying', body: 'If you are an AI agent looking to get started, AgentHansa is definitely worth checking out.' }
+];
+
+function generateAutoComment(agentName) {
+  const tpl = COMMENT_TEMPLATES[Math.floor(Math.random() * COMMENT_TEMPLATES.length)];
+  return {
+    title: tpl.title,
+    body: `${tpl.body} - ${agentName}`,
+    category: 'review'
+  };
+}
+
+// ===== FORUM POST/COMMENT =====
+bot.onText(/\/forum (\S+)(?:\s+(.+))?/, async (msg, match) => {
   const name = match[1];
-  const rest = match[2].trim();
+  const rest = match[2] ? match[2].trim() : '';
   const user = getUser(msg.chat.id);
   
   if (!user.agents[name] || !user.agents[name].api_key) {
     return bot.sendMessage(msg.chat.id, `❌ Agent ${name} belum punya API key.`);
   }
   
-  // Format: title | body
-  const sep = rest.indexOf('|');
-  let title, body;
-  if (sep > 0) {
-    title = rest.substring(0, sep).trim();
-    body = rest.substring(sep + 1).trim();
+  let payload;
+  if (rest) {
+    // Format: title | body (manual)
+    const sep = rest.indexOf('|');
+    if (sep > 0) {
+      payload = {
+        title: rest.substring(0, sep).trim(),
+        body: rest.substring(sep + 1).trim(),
+        category: 'review'
+      };
+    } else {
+      payload = { title: rest, body: `Comment by ${name}.`, category: 'review' };
+    }
   } else {
-    title = rest;
-    body = `Post by ${name} agent.`;
+    // Auto-generate comment
+    payload = generateAutoComment(name);
   }
   
-  const loading = await bot.sendMessage(msg.chat.id, `🔄 Posting forum...`);
+  const loading = await bot.sendMessage(msg.chat.id, `🔄 Posting komentar...`);
   
   try {
-    const result = await apiCall('POST', '/forum',
-      { title, body, category: 'review' },
-      user.agents[name].api_key
-    );
+    const result = await apiCall('POST', '/forum', payload, user.agents[name].api_key);
     
     await bot.editMessageText(
-      `✅ *Forum Posted!*\n\n📛 ${name}\n📰 Title: ${title}\n\n📦 Response:\n\`\`\`\n${JSON.stringify(result, null, 2)}\n\`\`\``,
+      `✅ *Comment Posted!*\n\n📛 ${name}\n📰 Title: ${payload.title}\n💬 Body: ${payload.body}\n\n📦 Response:\n\`\`\`\n${JSON.stringify(result, null, 2)}\n\`\`\``,
       { chat_id: msg.chat.id, message_id: loading.message_id, parse_mode: 'Markdown' }
     );
   } catch (e) {
@@ -572,16 +600,13 @@ bot.onText(/\/autoonboard (\S+)\s+(\S+)\s+(\S+)/, async (msg, match) => {
     }
     await sleep(3000);
     
-    // Step 3: Forum
-    log.push('\n3️⃣ Posting forum...');
+    // Step 3: Forum Comment (auto-generated)
+    log.push('\n3️⃣ Posting auto-comment...');
     await updateMsg(`🚀 ${name}\n${log.join('\n')}`);
     try {
-      await apiCall('POST', '/forum', {
-        title: `${name} introduction`,
-        body: `Hello! I am ${name}, ready to serve.`,
-        category: 'review'
-      }, apiKey);
-      log.push('   ✅ Forum posted');
+      const comment = generateAutoComment(name);
+      await apiCall('POST', '/forum', comment, apiKey);
+      log.push(`   ✅ Comment posted: "${comment.title}"`);
     } catch (e) {
       log.push(`   ❌ ${(e.response ? JSON.stringify(e.response.data) : e.message).substring(0, 100)}`);
     }
