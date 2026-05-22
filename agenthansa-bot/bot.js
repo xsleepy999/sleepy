@@ -93,7 +93,39 @@ function generateCandidates(q) {
   const cand = [];
   const n1 = nums[0];
   const n2 = nums[1] || 0;
+  const n3 = nums[2] || 0;
   
+  // === COMPOUND OPERATIONS (Highest priority) ===
+  // "doubles X and finds/has Y more" -> X*2 + Y
+  if (/(?:double|doubles|twice)/i.test(lower) && /(?:and|then).*(?:more|finds|adds?|plus)/i.test(lower) && nums.length >= 2) {
+    cand.push({ op: 'double_plus', val: n1 * 2 + n2 });
+  }
+  // "doubles X and finds/has Y less" -> X*2 - Y
+  if (/(?:double|doubles|twice)/i.test(lower) && /(?:and|then).*(?:less|fewer|loses?|minus)/i.test(lower) && nums.length >= 2) {
+    cand.push({ op: 'double_minus', val: n1 * 2 - n2 });
+  }
+  // "triples X and finds Y more" -> X*3 + Y
+  if (/(?:triple|triples|thrice)/i.test(lower) && /(?:and|then).*(?:more|finds|adds?|plus)/i.test(lower) && nums.length >= 2) {
+    cand.push({ op: 'triple_plus', val: n1 * 3 + n2 });
+  }
+  // "halves X and finds Y more" -> X/2 + Y
+  if (/\bhalf\b|halves/i.test(lower) && /(?:and|then).*(?:more|finds|adds?|plus)/i.test(lower) && nums.length >= 2) {
+    cand.push({ op: 'half_plus', val: Math.floor(n1 / 2) + n2 });
+  }
+  
+  // === RANGE COUNTING ===
+  // "from X to Y inclusive" -> Y - X + 1
+  if (/\bfrom\b.*\bto\b/i.test(lower) && nums.length >= 2) {
+    cand.push({ op: 'range_inclusive', val: Math.abs(n2 - n1) + 1 });
+    cand.push({ op: 'range_exclusive', val: Math.abs(n2 - n1) });
+  }
+  // "between X and Y"
+  if (/\bbetween\b/i.test(lower) && nums.length >= 2) {
+    cand.push({ op: 'between', val: Math.abs(n2 - n1) - 1 });
+    cand.push({ op: 'between_inc', val: Math.abs(n2 - n1) + 1 });
+  }
+  
+  // === MULTIPLY ===
   for (const w in MULT_WORDS) {
     if (new RegExp('\\b' + w + '\\b').test(lower)) {
       cand.push({ op: w, val: n1 * MULT_WORDS[w] });
@@ -116,7 +148,7 @@ function generateCandidates(q) {
     }
   }
   
-  if (/\bhalf\b/i.test(lower)) {
+  if (/\bhalf\b|halves/i.test(lower)) {
     cand.push({ op: 'half', val: Math.floor(n1 / 2) });
     if (n1 % 2 === 1) cand.push({ op: 'half_round', val: Math.round(n1 / 2) });
   }
@@ -139,6 +171,11 @@ function generateCandidates(q) {
     cand.push({ op: 'sum_fb', val: n1 + n2 });
     cand.push({ op: 'mult_fb', val: n1 * n2 });
     cand.push({ op: 'sub_fb', val: Math.abs(n1 - n2) });
+    cand.push({ op: 'range_fb', val: Math.abs(n2 - n1) + 1 });
+  }
+  if (nums.length >= 3) {
+    cand.push({ op: 'compound1', val: n1 * 2 + n3 });
+    cand.push({ op: 'compound2', val: n1 + n2 + n3 });
   }
   
   const seen = new Set();
