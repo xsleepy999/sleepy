@@ -154,16 +154,17 @@ function generateCandidates(q) {
 // ============================================
 
 async function attemptRegister(name, desc, statusCallback) {
-  const MAX_TRIES = 12;
+  const MAX_TRIES = 5;
   let log = [];
-  let waitTime = 3000; // Mulai 3 detik antar request
+  let waitTime = 10000; // Mulai 10 detik antar request
   
   for (let i = 0; i < MAX_TRIES; i++) {
     log.push(`\n--- Attempt ${i + 1}/${MAX_TRIES} ---`);
     
     // Wait sebelum request (kecuali pertama)
     if (i > 0) {
-      log.push(`Wait ${waitTime}ms...`);
+      log.push(`Wait ${waitTime/1000}s...`);
+      if (statusCallback) await statusCallback(`Tunggu ${waitTime/1000}s sebelum retry...`);
       await new Promise(r => setTimeout(r, waitTime));
     }
     
@@ -177,8 +178,8 @@ async function attemptRegister(name, desc, statusCallback) {
       
       // Rate limit - tunggu lebih lama
       if (errData.includes('Too many requests') || errData.includes('Slow down') || (err.response && err.response.status === 429)) {
-        waitTime = Math.min(waitTime * 2, 30000); // Exponential backoff, max 30s
-        log.push(`Rate limited, naik wait ke ${waitTime}ms`);
+        waitTime = Math.min(waitTime * 2, 60000); // Exponential backoff, max 60s
+        log.push(`Rate limited, tunggu ${waitTime/1000}s`);
         if (statusCallback) await statusCallback(`Rate limited, tunggu ${waitTime/1000}s...`);
         continue;
       }
@@ -214,7 +215,7 @@ async function attemptRegister(name, desc, statusCallback) {
     log.push(`Try: ${tryAns.op}=${tryAns.val}`);
     
     // Wait sebelum verify (avoid rate limit)
-    await new Promise(r => setTimeout(r, 1500));
+    await new Promise(r => setTimeout(r, 3000));
     
     try {
       const r2 = await axios.post(VERIFY, {
@@ -237,9 +238,9 @@ async function attemptRegister(name, desc, statusCallback) {
       log.push(`Wrong: ${errData.substring(0, 80)}`);
       
       // Rate limit pada verify - tunggu lebih lama
-      if (errData.includes('Too many') || (err.response && err.response.status === 429)) {
-        waitTime = Math.min(waitTime * 2, 30000);
-        log.push(`Rate limited, naik wait ke ${waitTime}ms`);
+      if (errData.includes('Too many') || errData.includes('Slow down') || (err.response && err.response.status === 429)) {
+        waitTime = Math.min(waitTime * 2, 60000);
+        log.push(`Rate limited, tunggu ${waitTime/1000}s`);
       }
       continue;
     }
