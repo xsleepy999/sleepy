@@ -366,7 +366,7 @@ bot.onText(/\/register (.+)/, async (msg, match) => {
       });
     }
   } catch (e) {
-    const err = e.response ? JSON.stringify(e.response.data) : e.message;
+    const err = String(e.response ? JSON.stringify(e.response.data) : (e.message || e));
     await bot.editMessageText('❌ Error: ' + err.substring(0, 1000), {
       chat_id: msg.chat.id, message_id: loading.message_id
     });
@@ -430,7 +430,7 @@ bot.onText(/\/wallet (\S+)\s+(.+)/, async (msg, match) => {
       { chat_id: msg.chat.id, message_id: loading.message_id, parse_mode: 'Markdown' }
     );
   } catch (e) {
-    const err = e.response ? JSON.stringify(e.response.data) : e.message;
+    const err = String(e.response ? JSON.stringify(e.response.data) : (e.message || e));
     await bot.editMessageText('❌ Error: ' + err.substring(0, 1000), {
       chat_id: msg.chat.id, message_id: loading.message_id
     });
@@ -463,7 +463,7 @@ bot.onText(/\/alliance (\S+)\s+(\S+)/, async (msg, match) => {
       { chat_id: msg.chat.id, message_id: loading.message_id, parse_mode: 'Markdown' }
     );
   } catch (e) {
-    const err = e.response ? JSON.stringify(e.response.data) : e.message;
+    const err = String(e.response ? JSON.stringify(e.response.data) : (e.message || e));
     await bot.editMessageText('❌ Error: ' + err.substring(0, 1000), {
       chat_id: msg.chat.id, message_id: loading.message_id
     });
@@ -490,7 +490,7 @@ bot.onText(/\/offer (\S+)\s+(.+)/, async (msg, match) => {
       { chat_id: msg.chat.id, message_id: loading.message_id, parse_mode: 'Markdown' }
     );
   } catch (e) {
-    const err = e.response ? JSON.stringify(e.response.data) : e.message;
+    const err = String(e.response ? JSON.stringify(e.response.data) : (e.message || e));
     await bot.editMessageText('❌ Error: ' + err.substring(0, 1000), {
       chat_id: msg.chat.id, message_id: loading.message_id
     });
@@ -558,7 +558,7 @@ bot.onText(/\/forum (\S+)(?:\s+(.+))?/, async (msg, match) => {
       { chat_id: msg.chat.id, message_id: loading.message_id, parse_mode: 'Markdown' }
     );
   } catch (e) {
-    const err = e.response ? JSON.stringify(e.response.data) : e.message;
+    const err = String(e.response ? JSON.stringify(e.response.data) : (e.message || e));
     await bot.editMessageText('❌ Error: ' + err.substring(0, 1000), {
       chat_id: msg.chat.id, message_id: loading.message_id
     });
@@ -584,7 +584,7 @@ bot.onText(/\/onboard_status (\S+)/, async (msg, match) => {
       { chat_id: msg.chat.id, message_id: loading.message_id, parse_mode: 'Markdown' }
     );
   } catch (e) {
-    const err = e.response ? JSON.stringify(e.response.data) : e.message;
+    const err = String(e.response ? JSON.stringify(e.response.data) : (e.message || e));
     await bot.editMessageText('❌ Error: ' + err.substring(0, 1000), {
       chat_id: msg.chat.id, message_id: loading.message_id
     });
