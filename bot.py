@@ -243,9 +243,13 @@ def main() -> None:
     logger.info("Bot starting... (model=%s, base_url=%s)", MODEL_NAME, API_BASE_URL)
     # drop_pending_updates=True -> abaikan pesan lama yang menumpuk saat bot offline,
     # mengurangi risiko konflik & response salah saat startup.
+    # poll_interval=0.5 + timeout=20 -> long-poll pendek supaya bot lebih responsif
+    # setelah HP idle dan Termux baru "bangun" lagi.
     app.run_polling(
         allowed_updates=Update.ALL_TYPES,
         drop_pending_updates=True,
+        poll_interval=0.5,
+        timeout=20,
     )
 
 
