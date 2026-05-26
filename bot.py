@@ -15,6 +15,7 @@ import httpx
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.constants import ChatAction
+from telegram.error import Conflict, NetworkError
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -137,6 +138,30 @@ async def whoami(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Tangkap error yang tidak ter-handle agar log tetap rapi."""
+    err = context.error
+
+    # Konflik = ada instance bot lain yang juga polling pakai token yang sama.
+    # Tidak ada gunanya retry terus, lebih baik beri pesan jelas dan stop.
+    if isinstance(err, Conflict):
+        logger.error(
+            "TELEGRAM CONFLICT: ada instance bot lain yang berjalan dengan token "
+            "yang sama. Matikan instance lain dulu, atau revoke token di @BotFather. "
+            "Bot akan berhenti."
+        )
+        # Stop bot dengan rapi
+        if context.application.running:
+            context.application.stop_running()
+        return
+
+    if isinstance(err, NetworkError):
+        logger.warning("Network error: %s", err)
+        return
+
+    logger.exception("Unhandled error", exc_info=err)
+
+
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     if not _is_allowed(user.id):
@@ -213,9 +238,15 @@ def main() -> None:
     app.add_handler(CommandHandler("reset", reset))
     app.add_handler(CommandHandler("whoami", whoami))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
+    app.add_error_handler(error_handler)
 
     logger.info("Bot starting... (model=%s, base_url=%s)", MODEL_NAME, API_BASE_URL)
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    # drop_pending_updates=True -> abaikan pesan lama yang menumpuk saat bot offline,
+    # mengurangi risiko konflik & response salah saat startup.
+    app.run_polling(
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=True,
+    )
 
 
 if __name__ == "__main__":
