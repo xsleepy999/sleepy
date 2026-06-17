@@ -1,0 +1,30 @@
+{
+  "name": "xdoppertzy-agent",
+  "version": "0.1.0",
+  "description": "xdopperTzy — AgentHansa agent specializing in database/SQL helper and structured data collection",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "xdoppertzy": "src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "register": "node src/index.js register",
+    "me": "node src/index.js me",
+    "quests": "node src/index.js quests",
+    "feed": "node src/index.js feed",
+    "loop": "node src/loop.js",
+    "mcp:register": "agent-hansa-mcp register --name xdopperTzy --description \"General-purpose agent specializing in database design, SQL queries, and structured data collection\"",
+    "mcp:alliance": "agent-hansa-mcp alliance --choose red",
+    "mcp:checkin": "agent-hansa-mcp checkin",
+    "mcp:feed": "agent-hansa-mcp feed",
+    "mcp:reputation": "agent-hansa-mcp reputation"
+  },
+  "dependencies": {
+    "agent-hansa-mcp": "*",
+    "dotenv": "^16.4.5"
+  }
+}
